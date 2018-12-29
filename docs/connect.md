@@ -138,6 +138,8 @@ export default function finalPropsSelectorFactory(
 
 #### connectAdvanced
 
+connectAdvanced返回一个react高阶组件, 根据pure,forwardRef配置决定是否采用PureComponent和ref的转移， 通过selectDerivedProps放法生成最终的props，传递给最终返回的react组件
+
 ```
 export default function connectAdvanced(
   // 属性生成工厂
@@ -268,7 +270,7 @@ export default function connectAdvanced(
         return lastDerivedProps
       }
     }
-
+    // 这里是最终渲染组件的地方，因为需要判断一下刚才最终给出的数据是否需要去更新组件。
     function makeChildElementSelector() {
       // 闭包储存上一次的执行结果  
       let lastChildProps, lastForwardRef, lastChildElement
@@ -367,3 +369,74 @@ export default function connectAdvanced(
 }
 
 ```
+
+## connect.js
+
+#### createConnect
+
+```
+// 生成connect方法的函数
+export function createConnect({
+  connectHOC = connectAdvanced,
+  mapStateToPropsFactories = defaultMapStateToPropsFactories,
+  mapDispatchToPropsFactories = defaultMapDispatchToPropsFactories,
+  mergePropsFactories = defaultMergePropsFactories,
+  selectorFactory = defaultSelectorFactory
+} = {}) {
+  // connect方法   接受的四个参数
+  return function connect(
+    mapStateToProps,
+    mapDispatchToProps,
+    mergeProps,
+    {
+      pure = true, // 是否浅比较
+      areStatesEqual = strictEqual,
+      areOwnPropsEqual = shallowEqual,
+      areStatePropsEqual = shallowEqual,
+      areMergedPropsEqual = shallowEqual,
+      ...extraOptions
+    } = {}
+  ) {
+    // 一系列的方法执行，对三个参数的类型做了容错处理
+    // 分别初始化了各自的参数mapStateToProps,mapDispatchToProps,mergeProps，注入了一些内部的默认参数和方法
+    // 他们大致是这样的function： 
+    // (dispatch, options) => initProxySelector() => mapToPropsProxy() => props  
+    const initMapStateToProps = match(
+      mapStateToProps,
+      mapStateToPropsFactories,
+      'mapStateToProps'
+    )
+    const initMapDispatchToProps = match(
+      mapDispatchToProps,
+      mapDispatchToPropsFactories,
+      'mapDispatchToProps'
+    )
+    const initMergeProps = match(mergeProps, mergePropsFactories, 'mergeProps')
+    // 返回值由执行connectAdvanced获取,并传入初始化的initMapStateToProps等参数和pure等配置项
+    return connectHOC(selectorFactory, {
+      // used in error messages
+      methodName: 'connect',
+
+      // used to compute Connect's displayName from the wrapped component's displayName.
+      getDisplayName: name => `Connect(${name})`,
+
+      // if mapStateToProps is falsy, the Connect component doesn't subscribe to store state changes
+      shouldHandleStateChanges: Boolean(mapStateToProps),
+
+      // passed through to selectorFactory
+      initMapStateToProps,
+      initMapDispatchToProps,
+      initMergeProps,
+      pure,
+      areStatesEqual,
+      areOwnPropsEqual,
+      areStatePropsEqual,
+      areMergedPropsEqual,
+
+      // any extra options args can override defaults of connect or connectAdvanced
+      ...extraOptions
+    })
+  }
+}
+```
+
