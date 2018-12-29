@@ -3,134 +3,73 @@
 connect是react-redux的核心，他将react与redux两个互不相干的库连接起来。connect执行后返回一个函数wrapWithConnect，wrapWithConnect接收一个组件作为参数，返回一个带有新状态props的组件。具体流程如下：
 <img src="../connect-flow.svg">
 
-## selectorFactory.js
+## connect.js
 
-#### impureFinalPropsSelectorFactory
-
-pure为false时强行合并状态和属性，不管状态和属性有没有变化，不做优化
+#### createConnect
 
 ```
-export function impureFinalPropsSelectorFactory(
-  mapStateToProps,
-  mapDispatchToProps,
-  mergeProps,
-  dispatch
-) {
-  return function impureFinalPropsSelector(state, ownProps) {
-    return mergeProps(
-      mapStateToProps(state, ownProps),
-      mapDispatchToProps(dispatch, ownProps),
-      ownProps
-    )
-  }
-}
-```
-
-#### pureFinalPropsSelectorFactory
-
-pure为true时，定义了几个合并状态和属性的方法，合并状态和属性
-
-```
-export function pureFinalPropsSelectorFactory(
-  mapStateToProps,
-  mapDispatchToProps,
-  mergeProps,
-  dispatch,
-  { areStatesEqual, areOwnPropsEqual, areStatePropsEqual }
-) {
-  let hasRunAtLeastOnce = false
-  let state
-  let ownProps
-  let stateProps
-  let dispatchProps
-  let mergedProps
-
-  function handleFirstCall(firstState, firstOwnProps) {
-    state = firstState
-    ownProps = firstOwnProps
-    stateProps = mapStateToProps(state, ownProps)
-    dispatchProps = mapDispatchToProps(dispatch, ownProps)
-    mergedProps = mergeProps(stateProps, dispatchProps, ownProps)
-    hasRunAtLeastOnce = true
-    return mergedProps
-  }
-
-  function handleNewPropsAndNewState() {
-    stateProps = mapStateToProps(state, ownProps)
-
-    if (mapDispatchToProps.dependsOnOwnProps)
-      dispatchProps = mapDispatchToProps(dispatch, ownProps)
-
-    mergedProps = mergeProps(stateProps, dispatchProps, ownProps)
-    return mergedProps
-  }
-
-  function handleNewProps() {
-    if (mapStateToProps.dependsOnOwnProps)
-      stateProps = mapStateToProps(state, ownProps)
-
-    if (mapDispatchToProps.dependsOnOwnProps)
-      dispatchProps = mapDispatchToProps(dispatch, ownProps)
-
-    mergedProps = mergeProps(stateProps, dispatchProps, ownProps)
-    return mergedProps
-  }
-
-  function handleNewState() {
-    const nextStateProps = mapStateToProps(state, ownProps)
-    const statePropsChanged = !areStatePropsEqual(nextStateProps, stateProps)
-    stateProps = nextStateProps
-
-    if (statePropsChanged)
-      mergedProps = mergeProps(stateProps, dispatchProps, ownProps)
-
-    return mergedProps
-  }
-
-  function handleSubsequentCalls(nextState, nextOwnProps) {
-    const propsChanged = !areOwnPropsEqual(nextOwnProps, ownProps)
-    const stateChanged = !areStatesEqual(nextState, state)
-    state = nextState
-    ownProps = nextOwnProps
-
-    if (propsChanged && stateChanged) return handleNewPropsAndNewState()
-    if (propsChanged) return handleNewProps()
-    if (stateChanged) return handleNewState()
-    return mergedProps
-  }
-
-  return function pureFinalPropsSelector(nextState, nextOwnProps) {
-    return hasRunAtLeastOnce
-      ? handleSubsequentCalls(nextState, nextOwnProps)
-      : handleFirstCall(nextState, nextOwnProps)
-  }
-}
-```
-
-#### finalPropsSelectorFactory
-
-finalPropsSelectorFactory是根据option.pure属性来决定是调用impureFinalPropsSelectorFactory还是pureFinalPropsSelectorFactory方法
-
-```
-// merge props和merge state
-export default function finalPropsSelectorFactory(
-  dispatch,
-  { initMapStateToProps, initMapDispatchToProps, initMergeProps, ...options }
-) {
-  const mapStateToProps = initMapStateToProps(dispatch, options)
-  const mapDispatchToProps = initMapDispatchToProps(dispatch, options)
-  const mergeProps = initMergeProps(dispatch, options)
-  const selectorFactory = options.pure
-    ? pureFinalPropsSelectorFactory
-    : impureFinalPropsSelectorFactory
-
-  return selectorFactory(
+// 生成connect方法的函数
+export function createConnect({
+  connectHOC = connectAdvanced,
+  mapStateToPropsFactories = defaultMapStateToPropsFactories,
+  mapDispatchToPropsFactories = defaultMapDispatchToPropsFactories,
+  mergePropsFactories = defaultMergePropsFactories,
+  selectorFactory = defaultSelectorFactory
+} = {}) {
+  // connect方法   接受的四个参数
+  return function connect(
     mapStateToProps,
     mapDispatchToProps,
     mergeProps,
-    dispatch,
-    options
-  )
+    {
+      pure = true, // 是否浅比较
+      areStatesEqual = strictEqual,
+      areOwnPropsEqual = shallowEqual,
+      areStatePropsEqual = shallowEqual,
+      areMergedPropsEqual = shallowEqual,
+      ...extraOptions
+    } = {}
+  ) {
+    // 一系列的方法执行，对三个参数的类型做了容错处理
+    // 分别初始化了各自的参数mapStateToProps,mapDispatchToProps,mergeProps，注入了一些内部的默认参数和方法
+    // 他们大致是这样的function： 
+    // (dispatch, options) => initProxySelector() => mapToPropsProxy() => props  
+    const initMapStateToProps = match(
+      mapStateToProps,
+      mapStateToPropsFactories,
+      'mapStateToProps'
+    )
+    const initMapDispatchToProps = match(
+      mapDispatchToProps,
+      mapDispatchToPropsFactories,
+      'mapDispatchToProps'
+    )
+    const initMergeProps = match(mergeProps, mergePropsFactories, 'mergeProps')
+    // 返回值由执行connectAdvanced获取,并传入初始化的initMapStateToProps等参数和pure等配置项
+    return connectHOC(selectorFactory, {
+      // used in error messages
+      methodName: 'connect',
+
+      // used to compute Connect's displayName from the wrapped component's displayName.
+      getDisplayName: name => `Connect(${name})`,
+
+      // if mapStateToProps is falsy, the Connect component doesn't subscribe to store state changes
+      shouldHandleStateChanges: Boolean(mapStateToProps),
+
+      // passed through to selectorFactory
+      initMapStateToProps,
+      initMapDispatchToProps,
+      initMergeProps,
+      pure,
+      areStatesEqual,
+      areOwnPropsEqual,
+      areStatePropsEqual,
+      areMergedPropsEqual,
+
+      // any extra options args can override defaults of connect or connectAdvanced
+      ...extraOptions
+    })
+  }
 }
 ```
 
@@ -369,74 +308,133 @@ export default function connectAdvanced(
 }
 
 ```
+## selectorFactory.js
 
-## connect.js
+#### impureFinalPropsSelectorFactory
 
-#### createConnect
+pure为false时强行合并状态和属性，不管状态和属性有没有变化，不做优化
 
 ```
-// 生成connect方法的函数
-export function createConnect({
-  connectHOC = connectAdvanced,
-  mapStateToPropsFactories = defaultMapStateToPropsFactories,
-  mapDispatchToPropsFactories = defaultMapDispatchToPropsFactories,
-  mergePropsFactories = defaultMergePropsFactories,
-  selectorFactory = defaultSelectorFactory
-} = {}) {
-  // connect方法   接受的四个参数
-  return function connect(
-    mapStateToProps,
-    mapDispatchToProps,
-    mergeProps,
-    {
-      pure = true, // 是否浅比较
-      areStatesEqual = strictEqual,
-      areOwnPropsEqual = shallowEqual,
-      areStatePropsEqual = shallowEqual,
-      areMergedPropsEqual = shallowEqual,
-      ...extraOptions
-    } = {}
-  ) {
-    // 一系列的方法执行，对三个参数的类型做了容错处理
-    // 分别初始化了各自的参数mapStateToProps,mapDispatchToProps,mergeProps，注入了一些内部的默认参数和方法
-    // 他们大致是这样的function： 
-    // (dispatch, options) => initProxySelector() => mapToPropsProxy() => props  
-    const initMapStateToProps = match(
-      mapStateToProps,
-      mapStateToPropsFactories,
-      'mapStateToProps'
+export function impureFinalPropsSelectorFactory(
+  mapStateToProps,
+  mapDispatchToProps,
+  mergeProps,
+  dispatch
+) {
+  return function impureFinalPropsSelector(state, ownProps) {
+    return mergeProps(
+      mapStateToProps(state, ownProps),
+      mapDispatchToProps(dispatch, ownProps),
+      ownProps
     )
-    const initMapDispatchToProps = match(
-      mapDispatchToProps,
-      mapDispatchToPropsFactories,
-      'mapDispatchToProps'
-    )
-    const initMergeProps = match(mergeProps, mergePropsFactories, 'mergeProps')
-    // 返回值由执行connectAdvanced获取,并传入初始化的initMapStateToProps等参数和pure等配置项
-    return connectHOC(selectorFactory, {
-      // used in error messages
-      methodName: 'connect',
-
-      // used to compute Connect's displayName from the wrapped component's displayName.
-      getDisplayName: name => `Connect(${name})`,
-
-      // if mapStateToProps is falsy, the Connect component doesn't subscribe to store state changes
-      shouldHandleStateChanges: Boolean(mapStateToProps),
-
-      // passed through to selectorFactory
-      initMapStateToProps,
-      initMapDispatchToProps,
-      initMergeProps,
-      pure,
-      areStatesEqual,
-      areOwnPropsEqual,
-      areStatePropsEqual,
-      areMergedPropsEqual,
-
-      // any extra options args can override defaults of connect or connectAdvanced
-      ...extraOptions
-    })
   }
 }
 ```
 
+#### pureFinalPropsSelectorFactory
+
+pure为true时，定义了几个合并状态和属性的方法，合并状态和属性
+
+```
+export function pureFinalPropsSelectorFactory(
+  mapStateToProps,
+  mapDispatchToProps,
+  mergeProps,
+  dispatch,
+  { areStatesEqual, areOwnPropsEqual, areStatePropsEqual }
+) {
+  let hasRunAtLeastOnce = false
+  let state
+  let ownProps
+  let stateProps
+  let dispatchProps
+  let mergedProps
+
+  function handleFirstCall(firstState, firstOwnProps) {
+    state = firstState
+    ownProps = firstOwnProps
+    stateProps = mapStateToProps(state, ownProps)
+    dispatchProps = mapDispatchToProps(dispatch, ownProps)
+    mergedProps = mergeProps(stateProps, dispatchProps, ownProps)
+    hasRunAtLeastOnce = true
+    return mergedProps
+  }
+
+  function handleNewPropsAndNewState() {
+    stateProps = mapStateToProps(state, ownProps)
+
+    if (mapDispatchToProps.dependsOnOwnProps)
+      dispatchProps = mapDispatchToProps(dispatch, ownProps)
+
+    mergedProps = mergeProps(stateProps, dispatchProps, ownProps)
+    return mergedProps
+  }
+
+  function handleNewProps() {
+    if (mapStateToProps.dependsOnOwnProps)
+      stateProps = mapStateToProps(state, ownProps)
+
+    if (mapDispatchToProps.dependsOnOwnProps)
+      dispatchProps = mapDispatchToProps(dispatch, ownProps)
+
+    mergedProps = mergeProps(stateProps, dispatchProps, ownProps)
+    return mergedProps
+  }
+
+  function handleNewState() {
+    const nextStateProps = mapStateToProps(state, ownProps)
+    const statePropsChanged = !areStatePropsEqual(nextStateProps, stateProps)
+    stateProps = nextStateProps
+
+    if (statePropsChanged)
+      mergedProps = mergeProps(stateProps, dispatchProps, ownProps)
+
+    return mergedProps
+  }
+
+  function handleSubsequentCalls(nextState, nextOwnProps) {
+    const propsChanged = !areOwnPropsEqual(nextOwnProps, ownProps)
+    const stateChanged = !areStatesEqual(nextState, state)
+    state = nextState
+    ownProps = nextOwnProps
+
+    if (propsChanged && stateChanged) return handleNewPropsAndNewState()
+    if (propsChanged) return handleNewProps()
+    if (stateChanged) return handleNewState()
+    return mergedProps
+  }
+
+  return function pureFinalPropsSelector(nextState, nextOwnProps) {
+    return hasRunAtLeastOnce
+      ? handleSubsequentCalls(nextState, nextOwnProps)
+      : handleFirstCall(nextState, nextOwnProps)
+  }
+}
+```
+
+#### finalPropsSelectorFactory
+
+finalPropsSelectorFactory是根据option.pure属性来决定是调用impureFinalPropsSelectorFactory还是pureFinalPropsSelectorFactory方法
+
+```
+// merge props和merge state
+export default function finalPropsSelectorFactory(
+  dispatch,
+  { initMapStateToProps, initMapDispatchToProps, initMergeProps, ...options }
+) {
+  const mapStateToProps = initMapStateToProps(dispatch, options)
+  const mapDispatchToProps = initMapDispatchToProps(dispatch, options)
+  const mergeProps = initMergeProps(dispatch, options)
+  const selectorFactory = options.pure
+    ? pureFinalPropsSelectorFactory
+    : impureFinalPropsSelectorFactory
+
+  return selectorFactory(
+    mapStateToProps,
+    mapDispatchToProps,
+    mergeProps,
+    dispatch,
+    options
+  )
+}
+```
