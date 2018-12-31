@@ -6,6 +6,8 @@ react-redux源码分析，记录了个人学习react-redux源码的过程中的�
 
 可能会有理解存在偏差的地方，欢迎提issue指出，共同学习，共同进步。
 
+<img src="./React-Redux.png" />
+
 ---
 
 ## 目录
